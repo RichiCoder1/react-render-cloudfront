@@ -1,0 +1,5 @@
+name: react-render-cloudfront
+runtime: nodejs
+description: A minimal AWS TypeScript Pulumi program
+main: infra/
+config: infra/
