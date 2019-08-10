@@ -49,7 +49,6 @@ async function getAssetUploadOptions(bucket: string, asset: asset.FileAsset, roo
         Tagging: 'AssetActiveState=active',
         path
     };
-    console.log({objectOptions});
     return objectOptions;
 }
 
