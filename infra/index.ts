@@ -1,14 +1,9 @@
-import { getProject, getStack } from '@pulumi/pulumi';
+import { getProject, getStack, asset, dynamic } from '@pulumi/pulumi';
 import { s3, cloudfront, lambda, iam } from '@pulumi/aws';
+import { resolve } from 'path';
+import { LazilyDeletedBucket } from './reactSiteResources';
 
 const deploymentKey = `${getProject()}-${getStack()}`;
-
-const render = async () => {
-    return {
-        status: 200, 
-        body: 'hello!' 
-    };
-};
 
 const renderRole = new iam.Role(`${deploymentKey}-render-permission`, {
     assumeRolePolicy: `{
@@ -27,18 +22,28 @@ const renderRole = new iam.Role(`${deploymentKey}-render-permission`, {
 }`,
 });
 
-const renderLambda = new lambda.CallbackFunction(`${deploymentKey}-render`, {
-    callback: render,
+const lambdaSource = new asset.AssetArchive({
+    'server.js': new asset.FileAsset(resolve(__dirname, '../build/server.js')),
+    'server.js.map': new asset.FileAsset(resolve(__dirname, '../build/server.js.map')),
+    'assets.json': new asset.FileAsset(resolve(__dirname, '../build/assets.json'))
+})
+
+const renderLambda = new lambda.Function(`${deploymentKey}-render`, {
+    code: lambdaSource,
+    handler: 'server.default',
     publish: true,
     timeout: 30,
     runtime: 'nodejs10.x',
-    role: renderRole
+    role: renderRole.arn
+});
+
+const publicAssetBucket = new LazilyDeletedBucket(`${deploymentKey}-public`, {
+    pattern: '**',
+    options: { cwd: resolve(__dirname, '../build/public') }
 });
 
 // Create an AWS resource (S3 Bucket)
 const staticOrigin = `${deploymentKey}-bucket-origin`;
-const bucketName = `${deploymentKey}-static`;
-const bucket = new s3.Bucket(bucketName, {});
 
 const originAccessIdentity = new cloudfront.OriginAccessIdentity(deploymentKey);
 
@@ -69,7 +74,7 @@ const cf = new cloudfront.Distribution(`${deploymentKey}-distribution`, {
     isIpv6Enabled: true,
     origins: [
         {
-            domainName: bucket.bucketRegionalDomainName,
+            domainName: publicAssetBucket.bucketRegionalDomainName,
             originId: staticOrigin,
             s3OriginConfig: {
                 originAccessIdentity: originAccessIdentity.cloudfrontAccessIdentityPath,
@@ -85,8 +90,8 @@ const cf = new cloudfront.Distribution(`${deploymentKey}-distribution`, {
             restrictionType: 'none'
         }
     },
-    defaultRootObject: 'render.js',
+    defaultRootObject: 'render',
 });
 
 export const cloudfrontUrl = cf.domainName;
-export const bucketId = bucket.id;
+export const bucketId = publicAssetBucket.bucket;

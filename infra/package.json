@@ -1,11 +1,15 @@
 {
     "name": "aws-typescript",
     "devDependencies": {
-        "@types/node": "latest"
+        "@types/node": "latest",
+        "@types/ssri": "^6.0.1"
     },
     "dependencies": {
-        "@pulumi/pulumi": "latest",
         "@pulumi/aws": "latest",
-        "@pulumi/awsx": "latest"
+        "@pulumi/awsx": "latest",
+        "@pulumi/pulumi": "latest",
+        "aws-sdk": "^2.507.0",
+        "globby": "^10.0.1",
+        "ssri": "^6.0.1"
     }
 }
