@@ -56,7 +56,8 @@ const cf = new cloudfront.Distribution(`${deploymentKey}-distribution`, {
             cookies: {
                 forward: 'none',
             },
-            queryString: false,
+            queryString: true,
+            queryStringCacheKeys: ['v']
         },
         maxTtl: 86400,
         minTtl: 0,
@@ -69,6 +70,7 @@ const cf = new cloudfront.Distribution(`${deploymentKey}-distribution`, {
                 lambdaArn: renderLambda.qualifiedArn,
             },
         ],
+        compress: true
     },
     enabled: true,
     isIpv6Enabled: true,

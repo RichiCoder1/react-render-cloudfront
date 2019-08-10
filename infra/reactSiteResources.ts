@@ -1,10 +1,14 @@
 import { dynamic, CustomResourceOptions, asset, Input, Output, ComponentResource } from '@pulumi/pulumi';
 import { s3, sdk } from '@pulumi/aws';
 import { BucketArgs } from '@pulumi/aws/s3';
+import { CreateResult } from '@pulumi/pulumi/dynamic';
+import { PutObjectRequest } from 'aws-sdk/clients/s3';
 import * as globby from 'globby';
-import { relative, resolve } from 'path';
+import { resolve, relative } from 'path';
 import { readFileSync } from 'fs';
 import { fromData, parse } from 'ssri';
+import * as mime from 'mime';
+import slash = require('slash');
 
 interface LazilyDeletedAssetInputs {
     asset: Input<asset.FileAsset>;
@@ -18,42 +22,57 @@ interface LazilyDeletedAssetProviderInputs {
     root: string;
 }
 
-interface LazilyDeletedAssetProviderOutputs {
+type LazilyDeletedAssetProviderOutputs = PutObjectRequest & { 
+    Metadata?: {
+        'X-Integrity': string;
+        [key: string]: string;
+    }
     path: string;
-    bucket: string;
-    ssri: string;
+}
+
+async function getAssetUploadOptions(bucket: string, asset: asset.FileAsset, root: string): Promise<LazilyDeletedAssetProviderOutputs> {
+    const path = await Promise.resolve(asset.path);
+    const key = slash(relative(root, path));
+
+    const fileData = readFileSync(path);
+    const ssri = fromData(fileData).toString();
+
+    const objectOptions: PutObjectRequest & { path: string } = {
+        Bucket: bucket,
+        Key: key,
+        Body: fileData,
+        ACL: 'public-read' as const,
+        ContentType: mime.getType(path) || 'text/html',
+        Metadata: {
+            'X-Integrity': ssri
+        },
+        Tagging: 'AssetActiveState=active',
+        path
+    };
+    console.log({objectOptions});
+    return objectOptions;
 }
 
 const LazilyDeletedAssetProvider: dynamic.ResourceProvider = {
-    async create(inputs: LazilyDeletedAssetProviderInputs) {
+    async create(inputs: LazilyDeletedAssetProviderInputs): Promise<CreateResult & { outs: LazilyDeletedAssetProviderOutputs }> {
         try {
-            const path = await Promise.resolve(inputs.asset.path);
-            const key = relative(inputs.root, path);
-
-            const fileData = readFileSync(path);
 
             const { S3 } = sdk;
             const api = new S3({
                 apiVersion: '2006-03-01',
             });
 
+            const { path, ...objectOptions } = await getAssetUploadOptions(inputs.bucket, inputs.asset, inputs.root);
+
             await api
-                .putObject({
-                    Bucket: inputs.bucket,
-                    Key: key,
-                    Body: fileData,
-                })
+                .putObject(objectOptions)
                 .promise();
 
-            const ssri = fromData(fileData);
+            delete objectOptions.Body;
 
             return {
-                id: key,
-                outs: {
-                    path,
-                    ssri: ssri.toString(),
-                    bucket: inputs.bucket,
-                },
+                id: objectOptions.Key,
+                outs: {...objectOptions, path },
             };
         } catch (e) {
             console.error(e, { inputs });
@@ -61,11 +80,13 @@ const LazilyDeletedAssetProvider: dynamic.ResourceProvider = {
         }
     },
     async diff(id: string, olds: LazilyDeletedAssetProviderOutputs, news: LazilyDeletedAssetProviderInputs) {
-        const { path, ssri } = olds;
-        const fileData = readFileSync(path);
+        const { Metadata } = olds;
+        const oldSsri = Metadata && Metadata['X-Integrity'];
 
-        const newSsri = fromData(fileData);
-        if (parse(ssri).match(newSsri) === false) {
+        const options = await getAssetUploadOptions(news.bucket, news.asset, news.root);
+        const newSsri = options.Metadata && options.Metadata['X-Integrity'];
+
+        if (!newSsri || !oldSsri || parse(oldSsri).match(newSsri) === false) {
             return {
                 changes: true,
             };
@@ -76,9 +97,8 @@ const LazilyDeletedAssetProvider: dynamic.ResourceProvider = {
         }
     },
     async update(id: string, olds: LazilyDeletedAssetProviderOutputs, news: LazilyDeletedAssetProviderInputs) {
-        const path = await news.asset.path;
 
-        const fileData = readFileSync(path);
+        const { path, ...putOptions } = await getAssetUploadOptions(news.bucket, news.asset, news.root);
 
         const { S3 } = sdk;
         const api = new S3({
@@ -86,28 +106,15 @@ const LazilyDeletedAssetProvider: dynamic.ResourceProvider = {
         });
 
         await api
-            .deleteObject({
-                Bucket: news.bucket,
-                Key: id,
-            })
+            .putObject(putOptions)
             .promise();
 
-        await api
-            .putObject({
-                Bucket: news.bucket,
-                Key: id,
-                Body: fileData,
-                Tagging: 'AssetActiveState=active',
-            })
-            .promise();
-
-        const ssri = fromData(fileData);
+        delete putOptions.Body;
 
         return {
             outs: {
-                bucket: news.bucket,
-                path,
-                ssri: ssri.toString(),
+                ...putOptions,
+                path
             },
         };
     },
@@ -119,7 +126,7 @@ const LazilyDeletedAssetProvider: dynamic.ResourceProvider = {
 
         await api
             .putObjectTagging({
-                Bucket: props.bucket,
+                Bucket: props.Bucket,
                 Key: id,
                 Tagging: {
                     TagSet: [{ Key: 'AssetActiveState', Value: 'removed' }],
