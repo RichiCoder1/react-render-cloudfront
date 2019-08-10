@@ -4,25 +4,26 @@ import { s3, cloudfront, lambda, iam } from '@pulumi/aws';
 const deploymentKey = `${getProject()}-${getStack()}`;
 
 const render = async () => {
-    return { status: 200, body: 'hello!' };
+    return {
+        status: 200, 
+        body: 'hello!' 
+    };
 };
 
 const renderRole = new iam.Role(`${deploymentKey}-render-permission`, {
     assumeRolePolicy: `{
     "Version": "2012-10-17",
-    "Statement": [
-    {
+    "Statement": [{
         "Sid": "",
         "Effect": "Allow",
         "Principal": {
-        "Service": [
-            "lambda.amazonaws.com",
-            "edgelambda.amazonaws.com"
-        ]
+            "Service": [
+                "lambda.amazonaws.com",
+                "edgelambda.amazonaws.com"
+            ]
         },
         "Action": "sts:AssumeRole"
-    }
-    ]
+    }]
 }`,
 });
 
